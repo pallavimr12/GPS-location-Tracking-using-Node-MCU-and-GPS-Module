@@ -1,0 +1,293 @@
+#define BLYNK_TEMPLATE_ID "TMPLWAWmU4bt"
+#define BLYNK_DEVICE_NAME "Location Tracker"
+#define BLYNK_AUTH_TOKEN "gFDnCBEmkqCFbtd31Jq2U6tFymobdNgq"
+
+/* Prints Blynk Connection Details */
+#define BLYNK_PRINT Serial
+
+// Libraries:
+#include<SoftwareSerial.h>
+/* Built-In Library */
+
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+/* Add JSON Package and Install: esp8266 by ESP8266 Community */
+
+#include <BlynkSimpleEsp8266.h>
+/* Install: Blynk by Volodymyr Shymanskyy */
+
+#include <TinyGPS++.h>
+/* Download it from https://github.com/mikalhart/TinyGPSPlus */
+
+#include <Wire.h>
+/* Built-In Library */
+
+#include <Adafruit_GFX.h>
+/* Install: "Adafruit GFX Library" by Adafruit */
+
+#include <Adafruit_SSD1306.h>
+/* Install: "Adafruit SSD1306" by Adafruit */
+
+// Configuration:
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+#define I2C_ADDRESS 0x3C  // Common Address: 0x3C / 0x3D
+
+// Object:
+// The (-1) parameter means that your OLED display doesn’t have a RESET pin.
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// Blynk App Virtual Pins:
+#define vPin_Map V0
+#define vPin_Lat V1
+#define vPin_Lng V2
+#define vPin_GpsIndicator V3
+
+// Blynk Project Authentication Key:
+const char auth[] = BLYNK_AUTH_TOKEN;
+
+// WiFi Credentials:
+const char ssid[] = "Redmi note 8";      // Name of your network (Hotspot or Router Name)
+const char pass[] = "Sona@1504";     // Corresponding Password
+
+// Pin Numbers: GPS
+#define GPS_RxPin 14      // Connect to TX of GPS Module
+#define GPS_TxPin 12    // Connect to RX of GPS Module
+
+// Software Serial Port:
+SoftwareSerial SerialGPS(GPS_RxPin, GPS_TxPin);
+
+// Objects:
+TinyGPSPlus gps;
+BlynkTimer timer;
+WidgetMap objMap(vPin_Map);
+WidgetLED objGpsIndicator(vPin_GpsIndicator);
+
+// Objects: Set web server port number to 80 (http port)
+ESP8266WebServer server(80);
+
+unsigned int gpsLoc_index = 1;
+double gpsLat, gpsLng;
+String strLat = "NA";
+String strLng = "NA";
+String strDate = "NA";
+String strTime = "NA";
+int mm, hr, dd;
+String locations[4] = {"12.366403,76.688714", "12.366413,76.688724", "12.366423,76.688734", "12.366433,76.688744"};
+
+void setup() {
+  /* Begin serial communication with Arduino and Arduino IDE (Serial Monitor) */
+  Serial.begin(9600);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, I2C_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    while (true) {  // Don't proceed, loop forever
+      yield();
+    }
+  }
+
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.setTextSize(2);
+  display.setCursor(0, 0);  // (ColIdx, RowIdx)
+  display.println("LocTracker");
+  display.setCursor(0, 20);
+  display.println("Connecting");
+  display.setCursor(0, 40);
+  display.println("to Wi-Fi..");
+  display.display();
+  delay(1000);
+
+  /* Begin communication with Blynk App */
+  Blynk.begin(auth, ssid, pass);
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("Connected.");
+  display.display();
+  delay(2000);
+
+  /* Establish serial communication with the GPS Module */
+  SerialGPS.begin(9600);
+
+  timer.setInterval(5000L, UpdateLocation);
+  objGpsIndicator.on();
+  Blynk.setProperty(vPin_GpsIndicator, "color", "#D3435C"); // Red Color
+
+
+  // Start web server
+  server.on("/", handle_OnConnect);
+  server.onNotFound(handle_NotFound);
+  server.begin();
+  Serial.println("\nHTTP Server Started");
+
+  // Print the Local IP Address:
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("IP:");
+  display.setCursor(0, 20);
+  display.println(WiFi.localIP());
+  display.display();
+  unsigned long startTime = millis();
+  while (millis() - startTime < 15000) {
+    yield();
+    delay(100);
+  }
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+  server.handleClient();
+}
+
+void UpdateLocation() {
+  Serial.println("Reading GPS...");
+  Blynk.setProperty(vPin_GpsIndicator, "color", "#41B1E1"); // Blue Color
+
+  unsigned long timeB4LoopEntry = millis();
+  while (millis() - timeB4LoopEntry < 3000) {
+    while (SerialGPS.available()) {
+      if (gps.encode(SerialGPS.read())) {
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Location:");
+        display.setCursor(0, 20);
+
+        if (gps.location.isValid()) {
+          gpsLat = gps.location.lat();
+          gpsLng = gps.location.lng();
+
+          strLat = String(gpsLat, 6);
+          strLng = String(gpsLng, 6);
+
+          Serial.print("Latitude : "); Serial.println(strLat);
+          Serial.print("Longitude: "); Serial.println(strLng);
+          Blynk.virtualWrite(vPin_Lat, strLat);
+          Blynk.virtualWrite(vPin_Lng, strLng);
+          objMap.location(gpsLoc_index, strLat, strLng, "GPS_Location " + String(gpsLoc_index));
+          Blynk.setProperty(vPin_GpsIndicator, "color", "#41E1AC"); // Green Color
+          gpsLoc_index++;
+          display.println(strLat);
+          display.setCursor(0, 40);
+          display.println(strLng);
+          display.display();
+
+          for (int i = 0; i < 3; i++) {
+            if (locations[i] != locations[i + 1]) {
+              locations[i] = locations[i + 1];
+            }
+          }
+          locations[3] = strLat + "," + strLng;
+
+          return;
+        } else {
+          strLat = "NA";
+          strLng = "NA";
+          Serial.println("Location: Not Available");
+          display.println("Not");
+          display.setCursor(0, 40);
+          display.println("Available");
+
+          display.display();
+        }
+
+        Serial.print("Date & Time: ");
+        if (gps.date.isValid() && gps.time.isValid()) {
+          mm = gps.time.minute() + 30;
+          if (mm > 59) {
+            hr = gps.time.hour() + 6;
+            mm /= 60;
+          } else {
+            hr = gps.time.hour() + 5;
+          }
+
+          if (hr > 23) {
+            dd = gps.date.day() + 1;
+            hr /= 24;
+          } else {
+            dd = gps.date.day();
+          }
+
+          strDate = String(dd) + "/" + String(gps.date.month()) + "/" + String(gps.date.year());
+          Serial.println(strDate);
+
+          strTime = String(hr) + ":" + String(mm) + ":" + String(gps.time.second());
+          Serial.println("strTime");
+        }  else {
+          strDate = "NA";
+          strTime = "NA";
+          Serial.println("Not Available");
+        }
+      }
+      yield();
+    }
+    yield();
+  }
+  Blynk.setProperty(vPin_GpsIndicator, "color", "#D3435C"); // Red Color
+  return;
+}
+
+void handle_OnConnect() {
+  Serial.println("Connected");
+  server.send(200, "text/html", SendHTML());
+}
+
+void handle_NotFound() {
+  server.send(404, "text/plain", "Not found!");
+}
+
+String SendHTML() {
+  String str;
+  str += "<!DOCTYPE html> <html>\n";
+  str += "<head>";
+  str += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+  str += "<title>GPS Tracker</title>\n";
+
+  str += "<style>\n";
+  str += "html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
+  str += "body{margin-top: 50px;} h1 {color: #444444;margin: 50px auto 30px;}\n";
+  str += "p {font-size: 14px;color: #888;margin-bottom: 10px;}\n";
+  str += "table, th, td {border:1px solid black;}\n";
+  str += "</style>\n";
+
+  str += "<script>\n";
+  str += "setInterval(loadDoc,200);\n";
+  str += "function loadDoc() {\n";
+  str += "var xhttp = new XMLHttpRequest();\n";
+  str += "xhttp.onreadystatechange = function() {\n";
+  str += "if (this.readyState == 4 && this.status == 200) {\n";
+  str += "document.getElementById(\"webpage\").innerHTML =this.responseText}\n";
+  str += "};\n";
+  str += "xhttp.open(\"GET\", \"/\", true);\n";
+  str += "xhttp.send();\n";
+  str += "}\n";
+  str += "</script>\n";
+
+  str += "</head>\n";
+
+  str += "<body>\n";
+
+  str += "<div id=\"webpage\">\n";
+  str += "<h1>GPS Tracker</h1>\n";
+
+  str += "<table style=\"width: 80%;margin: 0px auto;\">";
+  str += "<tr><td>Latitude</td><td>" + strLat + "</td></tr>";
+  str += "<tr><td>Longitude</td><td>" + strLng + "</td></tr>";
+  str += "<tr><td>Date</td><td>" + strDate + "</td></tr>";
+  str += "<tr><td>Time</td><td>" + strTime + "</td></tr>";
+  str += "</table>";
+
+  String gMapLink = "https://www.google.com/maps/dir/" + locations[0] + "/" + locations[1] + "/" + locations[2] + "/" + locations[3];
+  str += "<a href=" + gMapLink + ">Open in Google Map</a>";
+  str += "</div>\n";
+
+  str += "</body>\n";
+  str += "</html>\n";
+  return str;
+}
+
+//String gMapLink = "http://maps.google.com/?q=" + strLat + "," + strLng;
